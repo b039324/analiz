@@ -29,6 +29,23 @@ BIST30 = [
     "ISCTR", "SISE", "VAKBN", "TTKOM", "YKBNK"
 ]
 
+# ==================== BIST 100 LİSTESİ ====================
+BIST100 = [
+    "AKBNK", "AKSA", "AKSEN", "ALARK", "ALTNY", "ANSGR", "AEFES", "ARCLK",
+    "ASELS", "ASTOR", "BALSU", "BTCIM", "BSOKE", "BERA", "BIMAS", "BRSAN",
+    "BRYAT", "CCOLA", "CVKMD", "CWENE", "CANTE", "CIMSA", "DAPGM", "DSTKF",
+    "DOHOL", "DOAS", "EFOR", "ECILC", "EKGYO", "ENJSA", "ENERY", "ENKAI",
+    "EREGL", "ESEN", "EUREN", "EUPWR", "FENER", "FROTO", "GSRAY", "GENIL",
+    "GESAN", "GRTHO", "GUBRF", "GLRMK", "GRSEL", "SAHOL", "HEKTS", "IEYHO",
+    "ISMEN", "IZENR", "KRDMD", "KTLEV", "KLRHO", "KCHOL", "KUYAS", "MAGEN",
+    "MAVI", "MIATK", "MGROS", "MPARK", "OBAMS", "ODAS", "ODINE", "OTKAR",
+    "OYAKC", "PASEU", "PSGYO", "PAHOL", "PATEK", "PGSUS", "PETKM", "QUAGR",
+    "RALYH", "REEDR", "SARKY", "SASA", "SKBNK", "SOKM", "TAVHL", "TKFEN",
+    "TOASO", "TRMET", "TRENJ", "TUKAS", "TCELL", "TUPRS", "TRALT", "THYAO",
+    "GARAN", "HALKB", "ISCTR", "TSKB", "TURSG", "SISE", "VAKBN", "TTKOM",
+    "ULKER", "VESTL", "YKBNK", "ZOREN"
+]
+
 # ==================== YARDIMCI FONKSİYONLAR ====================
 def fmt(v, suffix="", na="N/A"):
     if v is None or (isinstance(v, float) and np.isnan(v)):
@@ -257,6 +274,52 @@ def analiz_et(sembol_ham, periyot="2y"):
     except Exception:
         return None
 
+# ==================== TARAMA FONKSİYONU ====================
+def tarama_yap(liste, liste_adi, periyot, bekleme=0.5):
+    """Verilen hisse listesini tarar, sonuç metnini döndürür."""
+    st.info(f"⏳ {liste_adi} taranıyor... Bu işlem {len(liste) * bekleme / 60:.1f} dakika sürebilir.")
+    ilerleme = st.progress(0)
+    durum = st.empty()
+
+    tum_metinler = []
+    basarili = 0
+    basarisiz = []
+
+    for i, sembol in enumerate(liste):
+        durum.text(f"📊 {sembol} çekiliyor... {i+1}/{len(liste)}")
+        metin = analiz_et(sembol, periyot)
+        if metin:
+            tum_metinler.append(metin)
+            basarili += 1
+        else:
+            basarisiz.append(sembol)
+        ilerleme.progress((i + 1) / len(liste))
+        time.sleep(bekleme)
+
+    durum.empty()
+    ilerleme.empty()
+
+    if not tum_metinler:
+        st.error("❌ Hiçbir hisseden veri alınamadı.")
+        return
+
+    tarih_str = datetime.now().strftime("%d.%m.%Y")
+    baslik = (
+        "=" * 50 + "\n"
+        f"  {liste_adi} - TOPLU ANALİZ\n"
+        f"  Tarih: {tarih_str}\n"
+        f"  Başarılı: {basarili}/{len(liste)}\n"
+        + "=" * 50 + "\n\n"
+    )
+    tam_metin = baslik + "\n\n".join(tum_metinler)
+
+    if basarisiz:
+        st.warning(f"⚠️ Veri alınamayan hisseler: {', '.join(basarisiz)}")
+
+    st.success(f"✅ {liste_adi} taraması tamam! ({basarili}/{len(liste)} hisse)")
+    st.info("👇 Sağ üstteki **kopyala ikonuna** tıkla, sonra yapay zekaya yapıştır.")
+    st.code(tam_metin, language=None)
+
 # ==================== GİRİŞ ====================
 col1, col2 = st.columns([3, 1])
 with col1:
@@ -264,8 +327,9 @@ with col1:
 with col2:
     periyot = st.selectbox("Periyot", ["1y", "2y", "5y"], index=1)
 
-analiz_btn = st.button("🔍 Tek Hisse Analiz Et", type="primary", use_container_width=True)
-bist30_btn = st.button("📊 BIST 30'u Tara", use_container_width=True)
+analiz_btn   = st.button("🔍 Tek Hisse Analiz Et", type="primary", use_container_width=True)
+bist30_btn   = st.button("📊 BIST 30'u Tara", use_container_width=True)
+bist100_btn  = st.button("📊 BIST 100'ü Tara", use_container_width=True)
 
 # ==================== TEK HİSSE ====================
 if analiz_btn and sembol_input:
@@ -281,47 +345,11 @@ if analiz_btn and sembol_input:
 
 # ==================== BIST 30 ====================
 elif bist30_btn:
-    st.info(f"⏳ BIST 30 taranıyor... Bu işlem ~90 saniye sürebilir.")
-    ilerleme = st.progress(0)
-    durum = st.empty()
+    tarama_yap(BIST30, "BIST 30", periyot, bekleme=0.3)
 
-    tum_metinler = []
-    basarili = 0
-    basarisiz = []
-
-    for i, sembol in enumerate(BIST30):
-        durum.text(f"📊 {sembol} çekiliyor... {i+1}/{len(BIST30)}")
-        metin = analiz_et(sembol, periyot)
-        if metin:
-            tum_metinler.append(metin)
-            basarili += 1
-        else:
-            basarisiz.append(sembol)
-        ilerleme.progress((i + 1) / len(BIST30))
-        time.sleep(0.3)  # Rate limit için
-
-    durum.empty()
-    ilerleme.empty()
-
-    if not tum_metinler:
-        st.error("❌ Hiçbir hisseden veri alınamadı.")
-    else:
-        tarih_str = datetime.now().strftime("%d.%m.%Y")
-        baslik = (
-            "=" * 50 + "\n"
-            f"  BIST 30 - TOPLU ANALİZ\n"
-            f"  Tarih: {tarih_str}\n"
-            f"  Başarılı: {basarili}/{len(BIST30)}\n"
-            + "=" * 50 + "\n\n"
-        )
-        tam_metin = baslik + "\n\n".join(tum_metinler)
-
-        if basarisiz:
-            st.warning(f"⚠️ Veri alınamayan hisseler: {', '.join(basarisiz)}")
-
-        st.success(f"✅ BIST 30 taraması tamam! ({basarili}/{len(BIST30)} hisse)")
-        st.info("👇 Sağ üstteki **kopyala ikonuna** tıkla, sonra yapay zekaya yapıştır.")
-        st.code(tam_metin, language=None)
+# ==================== BIST 100 ====================
+elif bist100_btn:
+    tarama_yap(BIST100, "BIST 100", periyot, bekleme=0.5)
 
 else:
     if analiz_btn:
