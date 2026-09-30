@@ -6,7 +6,7 @@ import numpy as np
 import time
 from datetime import datetime
 
-st.set_page_config(page_title="BIST Analiz", page_icon="📊", layout="centered")
+st.set_page_config(page_title="BIST & Coin Analiz", page_icon="📊", layout="centered")
 
 st.markdown("""
 <style>
@@ -16,8 +16,8 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-st.title("📊 BIST Analiz Paneli")
-st.caption("Hisse gir → veriyi kopyala → yapay zekaya yapıştır → yorum al.")
+st.title("📊 BIST & Coin Analiz Paneli")
+st.caption("Hisse (AKBNK) veya Coin (BTC, ETH, SOL) gir → veriyi kopyala → yapay zekaya yapıştır → yorum al.")
 
 # ==================== BIST 30 LİSTESİ ====================
 BIST30 = [
@@ -46,6 +46,14 @@ BIST100 = [
     "ULKER", "VESTL", "YKBNK", "ZOREN"
 ]
 
+# ==================== COIN LİSTESİ ====================
+COIN_LISTESI = [
+    "BTC", "ETH", "SOL", "XRP", "DOGE", "ADA", "AVAX", "DOT",
+    "MATIC", "LINK", "LTC", "BCH", "ATOM", "ETC", "XLM", "ALGO",
+    "VET", "FIL", "TRX", "EOS", "AAVE", "UNI", "MKR", "COMP",
+    "SUSHI", "CRV", "SNX", "YFI", "GRT", "MANA", "SAND", "AXS"
+]
+
 # ==================== YARDIMCI FONKSİYONLAR ====================
 def fmt(v, suffix="", na="N/A"):
     if v is None or (isinstance(v, float) and np.isnan(v)):
@@ -71,13 +79,21 @@ def fmt_yuzde(v, na="N/A"):
     except (ValueError, TypeError):
         return str(v)
 
-# ==================== TEK HİSSE ANALİZİ ====================
+# ==================== HİSSE / COİN ANALİZİ ====================
 def analiz_et(sembol_ham, periyot="2y"):
-    """Tek hisse için tam analiz metni döndürür. Hata olursa None döner."""
+    """Hisse veya coin için tam analiz metni döndürür. Hata olursa None döner."""
     try:
         sembol = sembol_ham.strip().upper()
-        if not sembol.endswith(".IS") and "." not in sembol:
-            sembol = sembol + ".IS"
+
+        # Coin mi hisse mi?
+        if sembol in COIN_LISTESI or sembol.endswith("-USD"):
+            if not sembol.endswith("-USD"):
+                sembol = sembol + "-USD"
+            coin_mi = True
+        else:
+            if not sembol.endswith(".IS") and "." not in sembol:
+                sembol = sembol + ".IS"
+            coin_mi = False
 
         hisse = yf.Ticker(sembol)
         df = hisse.history(period=periyot, interval="1d")
@@ -148,38 +164,45 @@ def analiz_et(sembol_ham, periyot="2y"):
         onceki = df.iloc[-2]
         tarih_str = df.index[-1].strftime("%d.%m.%Y")
 
-        # XU100 ve USDTRY
-        try:
-            xu100 = yf.Ticker("XU100.IS").history(period="5d", interval="1d")
-            xu100_degisim = (xu100["Close"].iloc[-1] / xu100["Close"].iloc[-2] - 1) * 100
-            xu100_deger = xu100["Close"].iloc[-1]
-        except Exception:
-            xu100_deger, xu100_degisim = None, None
+        # XU100 ve USDTRY (sadece hisseler için)
+        xu100_deger, xu100_degisim = None, None
+        usdtry_deger = None
 
-        try:
-            usdtry = yf.Ticker("USDTRY=X").history(period="5d", interval="1d")
-            usdtry_deger = usdtry["Close"].iloc[-1]
-        except Exception:
-            usdtry_deger = None
+        if not coin_mi:
+            try:
+                xu100 = yf.Ticker("XU100.IS").history(period="5d", interval="1d")
+                xu100_degisim = (xu100["Close"].iloc[-1] / xu100["Close"].iloc[-2] - 1) * 100
+                xu100_deger = xu100["Close"].iloc[-1]
+            except Exception:
+                pass
+
+            try:
+                usdtry = yf.Ticker("USDTRY=X").history(period="5d", interval="1d")
+                usdtry_deger = usdtry["Close"].iloc[-1]
+            except Exception:
+                pass
 
         L = []
         L.append("=" * 50)
-        L.append(f"  {sembol} - TEKNİK + TEMEL VERİ")
+        if coin_mi:
+            L.append(f"  {sembol} - TEKNİK VERİ (COIN)")
+        else:
+            L.append(f"  {sembol} - TEKNİK + TEMEL VERİ")
         L.append(f"  Tarih: {tarih_str}")
         L.append("=" * 50)
 
         L.append(f"\nFİYAT ({tarih_str})")
-        L.append(f"  Kapanış      : {son['Close']:.2f} TL")
-        L.append(f"  Açılış       : {son['Open']:.2f} TL")
-        L.append(f"  Yüksek       : {son['High']:.2f} TL")
-        L.append(f"  Düşük        : {son['Low']:.2f} TL")
+        L.append(f"  Kapanış      : {son['Close']:.2f}")
+        L.append(f"  Açılış       : {son['Open']:.2f}")
+        L.append(f"  Yüksek       : {son['High']:.2f}")
+        L.append(f"  Düşük        : {son['Low']:.2f}")
         L.append(f"  Değişim      : {((son['Close']-onceki['Close'])/onceki['Close']*100):+.2f}%")
 
         L.append(f"\nEMA / SMA DEĞERLERİ ({tarih_str})")
         for span in [9, 21, 50, 100, 200]:
-            L.append(f"  EMA {span:<4}     : {son[f'EMA{span}']:.2f} TL")
+            L.append(f"  EMA {span:<4}     : {son[f'EMA{span}']:.2f}")
         for span in [20, 50, 200]:
-            L.append(f"  SMA {span:<4}     : {son[f'SMA{span}']:.2f} TL")
+            L.append(f"  SMA {span:<4}     : {son[f'SMA{span}']:.2f}")
 
         L.append(f"\nFİYATIN EMA'LARA UZAKLIĞI ({tarih_str})")
         for span in [21, 50, 100, 200]:
@@ -199,41 +222,45 @@ def analiz_et(sembol_ham, periyot="2y"):
         L.append(f"  -DI          : {minus_di.iloc[-1]:.2f}")
 
         L.append(f"\nVOLATİLİTE ({tarih_str})")
-        L.append(f"  ATR (14)     : {son['ATR']:.2f} TL")
+        L.append(f"  ATR (14)     : {son['ATR']:.2f}")
         L.append(f"  ATR %        : {son['ATR_Pct']:.2f}%")
-        L.append(f"  BB Üst       : {son['BB_Upper']:.2f} TL")
-        L.append(f"  BB Orta      : {son['BB_Mid']:.2f} TL")
-        L.append(f"  BB Alt       : {son['BB_Lower']:.2f} TL")
+        L.append(f"  BB Üst       : {son['BB_Upper']:.2f}")
+        L.append(f"  BB Orta      : {son['BB_Mid']:.2f}")
+        L.append(f"  BB Alt       : {son['BB_Lower']:.2f}")
         L.append(f"  BB Genişlik  : {son['BB_Width']:.2f}%")
 
         L.append(f"\nHACİM ({tarih_str})")
         L.append(f"  Bugünkü      : {int(son['Volume']):,}")
         L.append(f"  20g Ortalama : {int(son['Vol_MA20']):,}")
         L.append(f"  Oran         : {(son['Volume']/son['Vol_MA20']):.2f}x")
-        L.append(f"  VWAP (20g)   : {son['VWAP20']:.2f} TL")
+        L.append(f"  VWAP (20g)   : {son['VWAP20']:.2f}")
         L.append(f"  OBV (bugün)  : {int(son['OBV']):,}")
 
         L.append(f"\nTEMEL VERİLER ({tarih_str})")
-        L.append(f"  Şirket       : {info.get('longName', 'N/A')}")
-        L.append(f"  Sektör       : {info.get('sector', 'N/A')}")
-        L.append(f"  Endüstri     : {info.get('industry', 'N/A')}")
-        L.append(f"  Piyasa Değ.  : {fmt_buyuk(info.get('marketCap'))} TL")
-        L.append(f"  F/K (TTM)    : {fmt(info.get('trailingPE'))}")
-        L.append(f"  İleri F/K    : {fmt(info.get('forwardPE'))}")
-        L.append(f"  PD/DD        : {fmt(info.get('priceToBook'))}")
-        L.append(f"  FD/FAVÖK     : {fmt(info.get('enterpriseToEbitda'))}")
-        L.append(f"  Kâr Marjı    : {fmt_yuzde(info.get('profitMargins'))}")
-        L.append(f"  Faaliyet Marjı: {fmt_yuzde(info.get('operatingMargins'))}")
-        L.append(f"  ROE          : {fmt_yuzde(info.get('returnOnEquity'))}")
-        L.append(f"  ROA          : {fmt_yuzde(info.get('returnOnAssets'))}")
-        L.append(f"  Gelir Büyüme : {fmt_yuzde(info.get('revenueGrowth'))}")
-        L.append(f"  Kâr Büyüme   : {fmt_yuzde(info.get('earningsGrowth'))}")
-        L.append(f"  EPS (TTM)    : {fmt(info.get('trailingEps'))}")
-        L.append(f"  İleri EPS    : {fmt(info.get('forwardEps'))}")
-        L.append(f"  Borç/Özkaynak: {fmt(info.get('debtToEquity'))}")
-        L.append(f"  Cari Oran    : {fmt(info.get('currentRatio'))}")
-        L.append(f"  Temettü Ver. : {fmt_yuzde(info.get('dividendYield'))}")
-        L.append(f"  Dağıtım Oranı: {fmt_yuzde(info.get('payoutRatio'))}")
+        if coin_mi:
+            L.append(f"  Coin         : {sembol}")
+            L.append(f"  Not          : Coinlerde temel veri (F/K, PD/DD) bulunmaz.")
+        else:
+            L.append(f"  Şirket       : {info.get('longName', 'N/A')}")
+            L.append(f"  Sektör       : {info.get('sector', 'N/A')}")
+            L.append(f"  Endüstri     : {info.get('industry', 'N/A')}")
+            L.append(f"  Piyasa Değ.  : {fmt_buyuk(info.get('marketCap'))} TL")
+            L.append(f"  F/K (TTM)    : {fmt(info.get('trailingPE'))}")
+            L.append(f"  İleri F/K    : {fmt(info.get('forwardPE'))}")
+            L.append(f"  PD/DD        : {fmt(info.get('priceToBook'))}")
+            L.append(f"  FD/FAVÖK     : {fmt(info.get('enterpriseToEbitda'))}")
+            L.append(f"  Kâr Marjı    : {fmt_yuzde(info.get('profitMargins'))}")
+            L.append(f"  Faaliyet Marjı: {fmt_yuzde(info.get('operatingMargins'))}")
+            L.append(f"  ROE          : {fmt_yuzde(info.get('returnOnEquity'))}")
+            L.append(f"  ROA          : {fmt_yuzde(info.get('returnOnAssets'))}")
+            L.append(f"  Gelir Büyüme : {fmt_yuzde(info.get('revenueGrowth'))}")
+            L.append(f"  Kâr Büyüme   : {fmt_yuzde(info.get('earningsGrowth'))}")
+            L.append(f"  EPS (TTM)    : {fmt(info.get('trailingEps'))}")
+            L.append(f"  İleri EPS    : {fmt(info.get('forwardEps'))}")
+            L.append(f"  Borç/Özkaynak: {fmt(info.get('debtToEquity'))}")
+            L.append(f"  Cari Oran    : {fmt(info.get('currentRatio'))}")
+            L.append(f"  Temettü Ver. : {fmt_yuzde(info.get('dividendYield'))}")
+            L.append(f"  Dağıtım Oranı: {fmt_yuzde(info.get('payoutRatio'))}")
 
         L.append(f"\nSON 10 GÜN (OHLC + Hacim)")
         L.append(f"  {'Tarih':<12}{'Açılış':>9}{'Yüksek':>9}{'Düşük':>9}{'Kapanış':>9}{'Hacim':>14}")
@@ -244,10 +271,10 @@ def analiz_et(sembol_ham, periyot="2y"):
                      f"{r['Close']:>9.2f}{int(r['Volume']):>14,}")
 
         L.append(f"\nSON 20 GÜN / 52 HAFTALIK ({tarih_str})")
-        L.append(f"  20g Yüksek   : {df['High'].tail(20).max():.2f} TL")
-        L.append(f"  20g Düşük    : {df['Low'].tail(20).min():.2f} TL")
-        L.append(f"  52h Yüksek   : {df['High'].tail(252).max():.2f} TL")
-        L.append(f"  52h Düşük    : {df['Low'].tail(252).min():.2f} TL")
+        L.append(f"  20g Yüksek   : {df['High'].tail(20).max():.2f}")
+        L.append(f"  20g Düşük    : {df['Low'].tail(20).min():.2f}")
+        L.append(f"  52h Yüksek   : {df['High'].tail(252).max():.2f}")
+        L.append(f"  52h Düşük    : {df['Low'].tail(252).min():.2f}")
         y52 = df['High'].tail(252).max()
         d52 = df['Low'].tail(252).min()
         L.append(f"  52h Konum    : {((son['Close']-d52)/(y52-d52)*100):.1f}%")
@@ -257,15 +284,18 @@ def analiz_et(sembol_ham, periyot="2y"):
             son_h = df_h.iloc[-1]
             ema21_h = df_h["Close"].ewm(span=21, adjust=False).mean().iloc[-1]
             ema50_h = df_h["Close"].ewm(span=50, adjust=False).mean().iloc[-1]
-            L.append(f"  Haftalık Kapanış: {son_h['Close']:.2f} TL")
-            L.append(f"  EMA 21 (H)      : {ema21_h:.2f} TL")
-            L.append(f"  EMA 50 (H)      : {ema50_h:.2f} TL")
+            L.append(f"  Haftalık Kapanış: {son_h['Close']:.2f}")
+            L.append(f"  EMA 21 (H)      : {ema21_h:.2f}")
+            L.append(f"  EMA 50 (H)      : {ema50_h:.2f}")
 
         L.append(f"\nKARŞILAŞTIRMA ({tarih_str})")
-        if xu100_deger:
-            L.append(f"  XU100        : {xu100_deger:.2f} ({xu100_degisim:+.2f}%)")
-        if usdtry_deger:
-            L.append(f"  USD/TRY      : {usdtry_deger:.4f}")
+        if coin_mi:
+            L.append(f"  Not          : Coinlerde endeks/kur karşılaştırması yapılmaz.")
+        else:
+            if xu100_deger:
+                L.append(f"  XU100        : {xu100_deger:.2f} ({xu100_degisim:+.2f}%)")
+            if usdtry_deger:
+                L.append(f"  USD/TRY      : {usdtry_deger:.4f}")
 
         L.append("\n" + "=" * 50)
 
@@ -323,15 +353,16 @@ def tarama_yap(liste, liste_adi, periyot, bekleme=0.5):
 # ==================== GİRİŞ ====================
 col1, col2 = st.columns([3, 1])
 with col1:
-    sembol_input = st.text_input("Hisse Sembolü", value="AKBNK", placeholder="Örn: AKBNK, KCHOL, THYAO")
+    sembol_input = st.text_input("Hisse / Coin Sembolü", value="AKBNK",
+                                 placeholder="Örn: AKBNK, KCHOL, BTC, ETH, SOL")
 with col2:
     periyot = st.selectbox("Periyot", ["1y", "2y", "5y"], index=1)
 
-analiz_btn   = st.button("🔍 Tek Hisse Analiz Et", type="primary", use_container_width=True)
+analiz_btn   = st.button("🔍 Tek Hisse / Coin Analiz Et", type="primary", use_container_width=True)
 bist30_btn   = st.button("📊 BIST 30'u Tara", use_container_width=True)
 bist100_btn  = st.button("📊 BIST 100'ü Tara", use_container_width=True)
 
-# ==================== TEK HİSSE ====================
+# ==================== TEK HİSSE / COİN ====================
 if analiz_btn and sembol_input:
     with st.spinner(f"⏳ {sembol_input.upper()} verisi çekiliyor..."):
         sonuc = analiz_et(sembol_input, periyot)
@@ -353,4 +384,4 @@ elif bist100_btn:
 
 else:
     if analiz_btn:
-        st.warning("⚠️ Lütfen bir hisse sembolü gir.")
+        st.warning("⚠️ Lütfen bir hisse veya coin sembolü gir.")
