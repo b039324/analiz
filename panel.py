@@ -87,6 +87,29 @@ def fmt_yuzde(v, na="N/A"):
     except (ValueError, TypeError):
         return str(v)
 
+# ==================== MARKDOWN ÇIKTISI ====================
+def md_indir_butonu(baslik, metin, dosya_adi, anahtar):
+    """Analiz metnini .md dosyası olarak indirten buton gösterir."""
+    md = (
+        f"# {baslik}\n\n"
+        f"_Veri çekim zamanı: {cekim_zamani()}_\n\n"
+        "```text\n" + metin + "\n```\n"
+    )
+    zaman_damgasi = datetime.now(TR_TZ).strftime("%Y%m%d_%H%M")
+    ayarlar = dict(
+        label="⬇️ Markdown (.md) olarak indir",
+        data=md.encode("utf-8"),
+        file_name=f"{dosya_adi}_{zaman_damgasi}.md",
+        mime="text/markdown",
+        use_container_width=True,
+        key=anahtar,
+    )
+    try:
+        # Yeni Streamlit: indirirken sayfa yeniden çalışmaz, sonuç ekranda kalır
+        st.download_button(on_click="ignore", **ayarlar)
+    except TypeError:
+        st.download_button(**ayarlar)
+
 # ==================== HİSSE / COİN ANALİZİ ====================
 def analiz_et(sembol_ham, periyot="2y"):
     """Hisse veya coin için tam analiz metni döndürür. Hata olursa None döner."""
@@ -363,6 +386,8 @@ def tarama_yap(liste, liste_adi, periyot, bekleme=0.5):
 
     st.success(f"✅ {liste_adi} taraması tamam! ({basarili}/{len(liste)} hisse)")
     st.info("👇 Sağ üstteki **kopyala ikonuna** tıkla, sonra yapay zekaya yapıştır.")
+    md_indir_butonu(f"{liste_adi} Toplu Analiz", tam_metin,
+                    liste_adi.replace(" ", ""), f"md_{liste_adi}")
     st.code(tam_metin, language=None)
 
 # ==================== GİRİŞ ====================
@@ -387,6 +412,8 @@ if analiz_btn and sembol_input:
     else:
         st.success(f"✅ {sembol_input.upper()} analizi hazır!")
         st.info("👇 Sağ üstteki **kopyala ikonuna** tıkla, sonra yapay zekaya yapıştır.")
+        md_indir_butonu(f"{sembol_input.strip().upper()} Analiz", sonuc,
+                        sembol_input.strip().upper(), "md_tek")
         st.code(sonuc, language=None)
 
 # ==================== BIST 30 ====================
