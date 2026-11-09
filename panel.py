@@ -87,6 +87,48 @@ def fmt_yuzde(v, na="N/A"):
     except (ValueError, TypeError):
         return str(v)
 
+def donem_getirisi(veri, gun):
+    try:
+        seri = veri["Close"].dropna()
+        return (seri.iloc[-1] / seri.iloc[-(gun + 1)] - 1) * 100 if len(seri) > gun else None
+    except Exception:
+        return None
+
+
+def hacim_profili(veri, gun=60, kademe=12):
+    try:
+        parca = veri.tail(gun).dropna(subset=["High", "Low", "Close", "Volume"])
+        if len(parca) < 10 or parca["Volume"].sum() <= 0:
+            return None
+        tipik = (parca["High"] + parca["Low"] + parca["Close"]) / 3
+        alt, ust = float(tipik.min()), float(tipik.max())
+        if not np.isfinite(alt) or not np.isfinite(ust) or ust <= alt:
+            return None
+        sinir = np.linspace(alt, ust, kademe + 1)
+        kutu = pd.cut(tipik, bins=sinir, include_lowest=True, labels=False)
+        hacim = parca.groupby(kutu, observed=False)["Volume"].sum().reindex(
+            range(kademe), fill_value=0).astype(float)
+        poc = int(hacim.values.argmax())
+        sol = sag = poc
+        toplam = float(hacim.iloc[poc])
+        hedef = float(hacim.sum()) * 0.70
+        while toplam < hedef and (sol > 0 or sag < kademe - 1):
+            lh = float(hacim.iloc[sol - 1]) if sol > 0 else -1
+            rh = float(hacim.iloc[sag + 1]) if sag < kademe - 1 else -1
+            if rh >= lh and sag < kademe - 1:
+                sag += 1
+                toplam += float(hacim.iloc[sag])
+            elif sol > 0:
+                sol -= 1
+                toplam += float(hacim.iloc[sol])
+            else:
+                break
+        merkez = (sinir[:-1] + sinir[1:]) / 2
+        return {"poc": float(merkez[poc]), "val": float(sinir[sol]), "vah": float(sinir[sag + 1])}
+    except Exception:
+        return None
+
+
 # ==================== MARKDOWN ÇIKTISI ====================
 def md_indir_butonu(baslik, metin, dosya_adi, anahtar):
     """Analiz metnini .md dosyası olarak indirten buton gösterir."""
@@ -129,6 +171,7 @@ def analiz_et(sembol_ham, periyot="2y"):
         hisse = yf.Ticker(sembol)
         df = hisse.history(period=periyot, interval="1d")
         df_h = hisse.history(period=periyot, interval="1wk")
+        df_m = hisse.history(period=periyot, interval="1mo")
         try:
             info = hisse.info
         except Exception:
@@ -141,6 +184,8 @@ def analiz_et(sembol_ham, periyot="2y"):
             df.columns = df.columns.get_level_values(0)
         if isinstance(df_h.columns, pd.MultiIndex):
             df_h.columns = df_h.columns.get_level_values(0)
+        if isinstance(df_m.columns, pd.MultiIndex):
+            df_m.columns = df_m.columns.get_level_values(0)
 
         # Göstergeler
         for span in [9, 21, 50, 100, 200]:
@@ -198,18 +243,25 @@ def analiz_et(sembol_ham, periyot="2y"):
         # XU100 ve USDTRY (sadece hisseler için)
         xu100_deger, xu100_degisim = None, None
         usdtry_deger = None
+        xu100_gecmis, xbank_gecmis = None, None
 
         if not coin_mi:
             try:
                 xu100 = yf.Ticker("XU100.IS").history(period="5d", interval="1d")
                 xu100_degisim = (xu100["Close"].iloc[-1] / xu100["Close"].iloc[-2] - 1) * 100
                 xu100_deger = xu100["Close"].iloc[-1]
+                xu100_gecmis = yf.Ticker("XU100.IS").history(period=periyot, interval="1d")
             except Exception:
                 pass
 
             try:
                 usdtry = yf.Ticker("USDTRY=X").history(period="5d", interval="1d")
                 usdtry_deger = usdtry["Close"].iloc[-1]
+            except Exception:
+                pass
+
+            try:
+                xbank_gecmis = yf.Ticker("XBANK.IS").history(period=periyot, interval="1d")
             except Exception:
                 pass
 
@@ -318,6 +370,46 @@ def analiz_et(sembol_ham, periyot="2y"):
             L.append(f"  Haftalık Kapanış: {son_h['Close']:.2f}")
             L.append(f"  EMA 21 (H)      : {ema21_h:.2f}")
             L.append(f"  EMA 50 (H)      : {ema50_h:.2f}")
+
+        L.append(f"\\nAYLIK GÖRÜNÜM ({tarih_str})")
+        if len(df_m) >= 3:
+            son_m = df_m.iloc[-1]
+            ema6_m = df_m["Close"].ewm(span=6, adjust=False).mean().iloc[-1]
+            ema12_m = df_m["Close"].ewm(span=12, adjust=False).mean().iloc[-1]
+            L.append(f"  Aylık Kapanış   : {son_m['Close']:.2f}")
+            L.append(f"  EMA 6 (A)       : {ema6_m:.2f}")
+            L.append(f"  EMA 12 (A)      : {ema12_m:.2f}")
+        else:
+            L.append("  Aylık veri      : Yetersiz")
+
+        L.append(f"\\nDESTEK / DİRENÇ REFERANSLARI ({tarih_str})")
+        for gun in [20, 60]:
+            parca = df.tail(gun)
+            if len(parca) >= min(gun, 10):
+                L.append(f"  Son {gun}g Dip    : {parca['Low'].min():.2f}")
+                L.append(f"  Son {gun}g Tepe   : {parca['High'].max():.2f}")
+
+        profil = hacim_profili(df, gun=60, kademe=12)
+        L.append(f"\\nHACİM PROFİLİ (SON 60 GÜN) ({tarih_str})")
+        if profil:
+            L.append(f"  POC (En yoğun)   : {profil['poc']:.2f}")
+            L.append(f"  Değer Alanı Alt  : {profil['val']:.2f}")
+            L.append(f"  Değer Alanı Üst  : {profil['vah']:.2f}")
+            L.append("  Not              : Yaklaşık tipik fiyat-hacim dağılımıdır.")
+        else:
+            L.append("  Hacim profili    : Hesaplanamadı")
+
+        if not coin_mi:
+            L.append(f"\\nGÖRECELİ PERFORMANS ({tarih_str})")
+            for ad, kaynak in [("HISSE", df), ("XU100", xu100_gecmis), ("XBANK", xbank_gecmis)]:
+                if kaynak is None or kaynak.empty:
+                    L.append(f"  {ad:<8} veri yok")
+                    continue
+                getiriler = []
+                for gun, etiket in [(21, "1 Ay"), (63, "3 Ay"), (126, "6 Ay")]:
+                    getiri = donem_getirisi(kaynak, gun)
+                    getiriler.append(f"{etiket}: {getiri:+.2f}%" if getiri is not None else f"{etiket}: N/A")
+                L.append(f"  {ad:<8} " + " | ".join(getiriler))
 
         L.append(f"\nKARŞILAŞTIRMA ({tarih_str})")
         if coin_mi:
