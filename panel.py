@@ -4,7 +4,14 @@ import yfinance as yf
 import pandas as pd
 import numpy as np
 import time
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
+
+# Türkiye kalıcı olarak UTC+3 (yaz saati yok); sunucu saati ne olursa olsun İstanbul saati yazılır
+TR_TZ = timezone(timedelta(hours=3))
+
+def cekim_zamani():
+    """Verinin çekildiği an: 'GG.AA.YYYY SS:DD:SS (İstanbul)'"""
+    return datetime.now(TR_TZ).strftime("%d.%m.%Y %H:%M:%S") + " (İstanbul)"
 
 st.set_page_config(page_title="BIST & Coin Analiz", page_icon="📊", layout="centered")
 
@@ -19,10 +26,11 @@ st.markdown("""
 st.title("📊 BIST & Coin Analiz Paneli")
 st.caption("Hisse (AKBNK) veya Coin (BTC, ETH, SOL) gir → veriyi kopyala → yapay zekaya yapıştır → yorum al.")
 
+# Endeks listeleri: Borsa İstanbul 1 Ekim - 31 Aralık 2026 dönemi (her çeyrek güncellenir)
 # ==================== BIST 30 LİSTESİ ====================
 BIST30 = [
     "AKBNK", "AEFES", "ASELS", "ASTOR", "BIMAS",
-    "DSTKF", "EKGYO", "ENKAI", "EREGL", "FROTO",
+    "TRMET", "EKGYO", "ENKAI", "EREGL", "FROTO",
     "GUBRF", "SAHOL", "KRDMD", "KCHOL", "MGROS",
     "PGSUS", "PETKM", "SASA", "TAVHL", "TOASO",
     "TCELL", "TUPRS", "TRALT", "THYAO", "GARAN",
@@ -31,17 +39,17 @@ BIST30 = [
 
 # ==================== BIST 100 LİSTESİ ====================
 BIST100 = [
-    "AKBNK", "AKSA", "AKSEN", "ALARK", "ALTNY", "ANSGR", "AEFES", "ARCLK",
-    "ASELS", "ASTOR", "BALSU", "BTCIM", "BSOKE", "BERA", "BIMAS", "BRSAN",
-    "BRYAT", "CCOLA", "CVKMD", "CWENE", "CANTE", "CIMSA", "DAPGM", "DSTKF",
-    "DOHOL", "DOAS", "EFOR", "ECILC", "EKGYO", "ENJSA", "ENERY", "ENKAI",
-    "EREGL", "ESEN", "EUREN", "EUPWR", "FENER", "FROTO", "GSRAY", "GENIL",
-    "GESAN", "GRTHO", "GUBRF", "GLRMK", "GRSEL", "SAHOL", "HEKTS", "IEYHO",
-    "ISMEN", "IZENR", "KRDMD", "KTLEV", "KLRHO", "KCHOL", "KUYAS", "MAGEN",
-    "MAVI", "MIATK", "MGROS", "MPARK", "OBAMS", "ODAS", "ODINE", "OTKAR",
-    "OYAKC", "PASEU", "PSGYO", "PAHOL", "PATEK", "PGSUS", "PETKM", "QUAGR",
-    "RALYH", "REEDR", "SARKY", "SASA", "SKBNK", "SOKM", "TAVHL", "TKFEN",
-    "TOASO", "TRMET", "TRENJ", "TUKAS", "TCELL", "TUPRS", "TRALT", "THYAO",
+    "AGHOL", "AHGAZ", "AKBNK", "AKCNS", "AKFYE", "AKSA", "AKSEN", "ALARK",
+    "ALBRK", "ALTNY", "ANHYT", "ANSGR", "AEFES", "ARCLK", "ASELS", "ASTOR",
+    "AYGAZ", "BTCIM", "BERA", "BIMAS", "BINHO", "BRSAN", "BRYAT", "CCOLA",
+    "CVKMD", "CWENE", "CANTE", "CIMSA", "DOHOL", "DOAS", "ECILC", "ECZYT",
+    "EGEEN", "EGGUB", "EKGYO", "ENJSA", "ENERY", "ENKAI", "ENTRA", "EREGL",
+    "EUREN", "FENER", "FROTO", "GLYHO", "GUBRF", "GLRMK", "GRSEL", "GWIND",
+    "SAHOL", "HEKTS", "ISDMR", "ISMEN", "KARSN", "KATMR", "KCAER", "KRDMD",
+    "KCHOL", "KORDS", "LMKDC", "MAVI", "MGROS", "MPARK", "OBAMS", "ODAS",
+    "OTKAR", "OYAKC", "PAHOL", "PGSUS", "PETKM", "RGYAS", "RYSAS", "SASA",
+    "SNGYO", "SOKM", "TABGD", "TAVHL", "TCKRC", "TKFEN", "TOASO", "TRGYO",
+    "TRMET", "TRENJ", "TTRAK", "TUKAS", "TCELL", "TUPRS", "TRALT", "THYAO",
     "GARAN", "HALKB", "ISCTR", "TSKB", "TURSG", "SISE", "VAKBN", "TTKOM",
     "ULKER", "VESTL", "YKBNK", "ZOREN"
 ]
@@ -298,6 +306,8 @@ def analiz_et(sembol_ham, periyot="2y"):
                 L.append(f"  USD/TRY      : {usdtry_deger:.4f}")
 
         L.append("\n" + "=" * 50)
+        L.append(f"  VERİ ÇEKİM ZAMANI: {cekim_zamani()}")
+        L.append("=" * 50)
 
         return "\n".join(L)
 
@@ -333,15 +343,20 @@ def tarama_yap(liste, liste_adi, periyot, bekleme=0.5):
         st.error("❌ Hiçbir hisseden veri alınamadı.")
         return
 
-    tarih_str = datetime.now().strftime("%d.%m.%Y")
+    zaman = cekim_zamani()
     baslik = (
         "=" * 50 + "\n"
         f"  {liste_adi} - TOPLU ANALİZ\n"
-        f"  Tarih: {tarih_str}\n"
+        f"  Veri çekim zamanı: {zaman}\n"
         f"  Başarılı: {basarili}/{len(liste)}\n"
         + "=" * 50 + "\n\n"
     )
-    tam_metin = baslik + "\n\n".join(tum_metinler)
+    son_not = (
+        "\n\n" + "=" * 50 + "\n"
+        f"  TARAMA BİTİŞ - VERİ ÇEKİM ZAMANI: {zaman}\n"
+        + "=" * 50
+    )
+    tam_metin = baslik + "\n\n".join(tum_metinler) + son_not
 
     if basarisiz:
         st.warning(f"⚠️ Veri alınamayan hisseler: {', '.join(basarisiz)}")
