@@ -87,48 +87,6 @@ def fmt_yuzde(v, na="N/A"):
     except (ValueError, TypeError):
         return str(v)
 
-def donem_getirisi(veri, gun):
-    try:
-        seri = veri["Close"].dropna()
-        return (seri.iloc[-1] / seri.iloc[-(gun + 1)] - 1) * 100 if len(seri) > gun else None
-    except Exception:
-        return None
-
-
-def hacim_profili(veri, gun=60, kademe=12):
-    try:
-        parca = veri.tail(gun).dropna(subset=["High", "Low", "Close", "Volume"])
-        if len(parca) < 10 or parca["Volume"].sum() <= 0:
-            return None
-        tipik = (parca["High"] + parca["Low"] + parca["Close"]) / 3
-        alt, ust = float(tipik.min()), float(tipik.max())
-        if not np.isfinite(alt) or not np.isfinite(ust) or ust <= alt:
-            return None
-        sinir = np.linspace(alt, ust, kademe + 1)
-        kutu = pd.cut(tipik, bins=sinir, include_lowest=True, labels=False)
-        hacim = parca.groupby(kutu, observed=False)["Volume"].sum().reindex(
-            range(kademe), fill_value=0).astype(float)
-        poc = int(hacim.values.argmax())
-        sol = sag = poc
-        toplam = float(hacim.iloc[poc])
-        hedef = float(hacim.sum()) * 0.70
-        while toplam < hedef and (sol > 0 or sag < kademe - 1):
-            lh = float(hacim.iloc[sol - 1]) if sol > 0 else -1
-            rh = float(hacim.iloc[sag + 1]) if sag < kademe - 1 else -1
-            if rh >= lh and sag < kademe - 1:
-                sag += 1
-                toplam += float(hacim.iloc[sag])
-            elif sol > 0:
-                sol -= 1
-                toplam += float(hacim.iloc[sol])
-            else:
-                break
-        merkez = (sinir[:-1] + sinir[1:]) / 2
-        return {"poc": float(merkez[poc]), "val": float(sinir[sol]), "vah": float(sinir[sag + 1])}
-    except Exception:
-        return None
-
-
 # ==================== MARKDOWN ÇIKTISI ====================
 def md_indir_butonu(baslik, metin, dosya_adi, anahtar):
     """Analiz metnini .md dosyası olarak indirten buton gösterir."""
@@ -147,13 +105,123 @@ def md_indir_butonu(baslik, metin, dosya_adi, anahtar):
         key=anahtar,
     )
     try:
-        # Yeni Streamlit: indirirken sayfa yeniden çalışmaz, sonuç ekranda kalır
         st.download_button(on_click="ignore", **ayarlar)
     except TypeError:
         st.download_button(**ayarlar)
 
+# ==================== DESTEK / DİRENÇ ====================
+def destek_direnc(df, pencere=20, adet=3):
+    """
+    Son N günlük pivot high/low'lardan destek ve direnç seviyeleri üretir.
+    Pivot: bir barın High'ı kendinden önceki ve sonraki `pencere` barın High'ından büyükse pivot high.
+    """
+    highs, lows = [], []
+    n = len(df)
+    for i in range(pencere, n - pencere):
+        pencere_high = df["High"].iloc[i - pencere:i + pencere + 1]
+        pencere_low  = df["Low"].iloc[i - pencere:i + pencere + 1]
+        if df["High"].iloc[i] == pencere_high.max():
+            highs.append(df["High"].iloc[i])
+        if df["Low"].iloc[i] == pencere_low.min():
+            lows.append(df["Low"].iloc[i])
+
+    kapanis = df["Close"].iloc[-1]
+
+    # Kapanışın üstündeki en yakın dirençler
+    direncler = sorted([h for h in highs if h > kapanis])[:adet]
+    # Kapanışın altındaki en yakın destekler (büyükten küçüğe)
+    destekler = sorted([l for l in lows if l < kapanis], reverse=True)[:adet]
+
+    return destekler, direncler
+
+# ==================== HACİM PROFİLİ ====================
+def hacim_profili(df, bin_sayisi=20):
+    """
+    Fiyat aralığını N eşit kutuya böler, her kutuda işlem gören toplam hacmi hesaplar.
+    POC (Point of Control) = en yüksek hacimli kutu.
+    Value Area = toplam hacmin %70'ini oluşturan kutular.
+    """
+    if df.empty or len(df) < 5:
+        return None
+
+    fiyat_min = df["Low"].min()
+    fiyat_max = df["High"].max()
+    if fiyat_max == fiyat_min:
+        return None
+
+    kenarlar = np.linspace(fiyat_min, fiyat_max, bin_sayisi + 1)
+    hacimler = np.zeros(bin_sayisi)
+
+    # Her barı tipik fiyatına göre bir kutuya ata, hacmi o kutuya ekle
+    tipik = (df["High"] + df["Low"] + df["Close"]) / 3
+    for fiyat, hacim in zip(tipik.values, df["Volume"].values):
+        idx = np.searchsorted(kenarlar, fiyat, side="right") - 1
+        idx = min(max(idx, 0), bin_sayisi - 1)
+        hacimler[idx] += hacim
+
+    toplam = hacimler.sum()
+    if toplam == 0:
+        return None
+
+    # POC: en yüksek hacimli kutu
+    poc_idx = int(np.argmax(hacimler))
+    poc_fiyat = (kenarlar[poc_idx] + kenarlar[poc_idx + 1]) / 2
+
+    # Value Area: hacimce sıralayıp toplamın %70'ine ulaşana kadar al
+    sirali = np.argsort(hacimler)[::-1]
+    kumulatif = 0
+    va_idxler = []
+    for i in sirali:
+        va_idxler.append(i)
+        kumulatif += hacimler[i]
+        if kumulatif / toplam >= 0.70:
+            break
+    va_min = kenarlar[min(va_idxler)]
+    va_max = kenarlar[max(va_idxler) + 1]
+
+    # Kapanışın bulunduğu kutu ve o kutunun toplam hacimdeki payı
+    kapanis = df["Close"].iloc[-1]
+    kapanis_idx = np.searchsorted(kenarlar, kapanis, side="right") - 1
+    kapanis_idx = min(max(kapanis_idx, 0), bin_sayisi - 1)
+    kapanis_pay = hacimler[kapanis_idx] / toplam * 100
+
+    # En yoğun 5 bölgeyi raporla
+    en_yogun = sorted(range(bin_sayisi), key=lambda i: hacimler[i], reverse=True)[:5]
+    yogun_bolgeler = []
+    for i in en_yogun:
+        alt = kenarlar[i]
+        ust = kenarlar[i + 1]
+        pay = hacimler[i] / toplam * 100
+        yogun_bolgeler.append((alt, ust, pay))
+
+    return {
+        "poc": poc_fiyat,
+        "va_min": va_min,
+        "va_max": va_max,
+        "kapanis_pay": kapanis_pay,
+        "yogun_bolgeler": yogun_bolgeler,
+        "toplam_hacim": toplam,
+    }
+
+# ==================== HAFTALIK / AYLIK KAPANIŞ ====================
+def haftalik_aylik_kapanis(sembol, coin_mi):
+    """Son 5 haftalık ve 6 aylık kapanış verilerini döndürür."""
+    try:
+        ticker = yf.Ticker(sembol)
+        haftalik = ticker.history(period="6mo", interval="1wk")
+        aylik    = ticker.history(period="2y", interval="1mo")
+
+        if isinstance(haftalik.columns, pd.MultiIndex):
+            haftalik.columns = haftalik.columns.get_level_values(0)
+        if isinstance(aylik.columns, pd.MultiIndex):
+            aylik.columns = aylik.columns.get_level_values(0)
+
+        return haftalik, aylik
+    except Exception:
+        return pd.DataFrame(), pd.DataFrame()
+
 # ==================== HİSSE / COİN ANALİZİ ====================
-def analiz_et(sembol_ham, periyot="2y"):
+def analiz_et(sembol_ham, periyot="2y", endeks_cache=None):
     """Hisse veya coin için tam analiz metni döndürür. Hata olursa None döner."""
     try:
         sembol = sembol_ham.strip().upper()
@@ -171,7 +239,6 @@ def analiz_et(sembol_ham, periyot="2y"):
         hisse = yf.Ticker(sembol)
         df = hisse.history(period=periyot, interval="1d")
         df_h = hisse.history(period=periyot, interval="1wk")
-        df_m = hisse.history(period=periyot, interval="1mo")
         try:
             info = hisse.info
         except Exception:
@@ -184,8 +251,6 @@ def analiz_et(sembol_ham, periyot="2y"):
             df.columns = df.columns.get_level_values(0)
         if isinstance(df_h.columns, pd.MultiIndex):
             df_h.columns = df_h.columns.get_level_values(0)
-        if isinstance(df_m.columns, pd.MultiIndex):
-            df_m.columns = df_m.columns.get_level_values(0)
 
         # Göstergeler
         for span in [9, 21, 50, 100, 200]:
@@ -243,25 +308,18 @@ def analiz_et(sembol_ham, periyot="2y"):
         # XU100 ve USDTRY (sadece hisseler için)
         xu100_deger, xu100_degisim = None, None
         usdtry_deger = None
-        xu100_gecmis, xbank_gecmis = None, None
 
         if not coin_mi:
             try:
                 xu100 = yf.Ticker("XU100.IS").history(period="5d", interval="1d")
                 xu100_degisim = (xu100["Close"].iloc[-1] / xu100["Close"].iloc[-2] - 1) * 100
                 xu100_deger = xu100["Close"].iloc[-1]
-                xu100_gecmis = yf.Ticker("XU100.IS").history(period=periyot, interval="1d")
             except Exception:
                 pass
 
             try:
                 usdtry = yf.Ticker("USDTRY=X").history(period="5d", interval="1d")
                 usdtry_deger = usdtry["Close"].iloc[-1]
-            except Exception:
-                pass
-
-            try:
-                xbank_gecmis = yf.Ticker("XBANK.IS").history(period=periyot, interval="1d")
             except Exception:
                 pass
 
@@ -353,6 +411,119 @@ def analiz_et(sembol_ham, periyot="2y"):
                      f"{r['Open']:>9.2f}{r['High']:>9.2f}{r['Low']:>9.2f}"
                      f"{r['Close']:>9.2f}{int(r['Volume']):>14,}")
 
+        # ============ 1) HAFTALIK / AYLIK KAPANIŞ ============
+        haftalik, aylik = haftalik_aylik_kapanis(sembol, coin_mi)
+
+        L.append(f"\nHAFTALIK KAPANIŞLAR (son 5 hafta)")
+        if not haftalik.empty and len(haftalik) >= 2:
+            for i in range(max(-5, -len(haftalik)), 0):
+                r = haftalik.iloc[i]
+                onceki_h = haftalik.iloc[i - 1] if i - 1 >= -len(haftalik) else None
+                degisim = ""
+                if onceki_h is not None:
+                    degisim = f"  ({(r['Close']/onceki_h['Close']-1)*100:+.2f}%)"
+                L.append(f"  {haftalik.index[i].strftime('%d.%m.%Y'):<12}  "
+                         f"Kapanış: {r['Close']:>10.2f}{degisim}")
+        else:
+            L.append("  Yetersiz haftalık veri.")
+
+        L.append(f"\nAYLIK KAPANIŞLAR (son 6 ay)")
+        if not aylik.empty and len(aylik) >= 2:
+            for i in range(max(-6, -len(aylik)), 0):
+                r = aylik.iloc[i]
+                onceki_a = aylik.iloc[i - 1] if i - 1 >= -len(aylik) else None
+                degisim = ""
+                if onceki_a is not None:
+                    degisim = f"  ({(r['Close']/onceki_a['Close']-1)*100:+.2f}%)"
+                L.append(f"  {aylik.index[i].strftime('%b %Y'):<12}  "
+                         f"Kapanış: {r['Close']:>10.2f}{degisim}")
+        else:
+            L.append("  Yetersiz aylık veri.")
+
+        # ============ 4) DESTEK / DİRENÇ ============
+        L.append(f"\nDESTEK / DİRENÇ SEVİYELERİ ({tarih_str})")
+        for pencere, etiket in [(20, "Kısa (20g)"), (60, "Orta (60g)")]:
+            if len(df) >= pencere * 2 + 1:
+                dest, dirn = destek_direnc(df, pencere=pencere, adet=3)
+                L.append(f"  {etiket}:")
+                if dirn:
+                    for i, d in enumerate(dirn, 1):
+                        uzaklik = (d / son['Close'] - 1) * 100
+                        L.append(f"    Direnç {i}: {d:>10.2f}  ({uzaklik:+.2f}%)")
+                else:
+                    L.append(f"    Direnç: Yok (fiyat zirvede)")
+                if dest:
+                    for i, d in enumerate(dest, 1):
+                        uzaklik = (d / son['Close'] - 1) * 100
+                        L.append(f"    Destek {i}: {d:>10.2f}  ({uzaklik:+.2f}%)")
+                else:
+                    L.append(f"    Destek: Yok (fiyat dipte)")
+
+        # ============ 5) HACİM PROFİLİ ============
+        L.append(f"\nHACİM PROFİLİ ({tarih_str})")
+        hp = hacim_profili(df, bin_sayisi=20)
+        if hp:
+            L.append(f"  POC (En Yoğun Fiyat) : {hp['poc']:.2f}")
+            L.append(f"  Value Area (%70)     : {hp['va_min']:.2f} - {hp['va_max']:.2f}")
+            L.append(f"  Kapanışın Bulunduğu Bölge Hacmi: %{hp['kapanis_pay']:.2f}")
+            L.append(f"  En Yoğun 5 Bölge:")
+            for alt, ust, pay in hp["yogun_bolgeler"]:
+                L.append(f"    {alt:>10.2f} - {ust:>10.2f}  →  %{pay:.2f}")
+        else:
+            L.append("  Hacim profili hesaplanamadı.")
+
+        # ============ 3) GÖRECELİ PERFORMANS ============
+        L.append(f"\nGÖRECELİ PERFORMANS ({tarih_str})")
+        if coin_mi:
+            L.append("  Coinlerde endeks karşılaştırması yapılmaz.")
+        else:
+            karsilastirma_endeksler = {
+                "XU100": "XU100.IS",
+                "XBANK": "XBANK.IS",
+            }
+            donemler = [("5g", 5), ("20g", 20), ("60g", 60), ("120g", 120), ("250g", 250)]
+
+            hisse_getiri = {}
+            for etiket, gun in donemler:
+                if len(df) > gun:
+                    hisse_getiri[etiket] = (df["Close"].iloc[-1] / df["Close"].iloc[-gun-1] - 1) * 100
+                else:
+                    hisse_getiri[etiket] = None
+
+            if endeks_cache is None:
+                endeks_cache = {}
+
+            L.append(f"  {'Dönem':<6}{'Hisse':>10}{'XU100':>10}{'XBANK':>10}{'Fark(XU100)':>13}{'Fark(XBANK)':>13}")
+            for etiket, gun in donemler:
+                h_get = hisse_getiri.get(etiket)
+                endeks_getirileri = {}
+                for endeks_adi, endeks_sembol in karsilastirma_endeksler.items():
+                    if endeks_sembol not in endeks_cache:
+                        try:
+                            e_df = yf.Ticker(endeks_sembol).history(period="2y", interval="1d")
+                            if isinstance(e_df.columns, pd.MultiIndex):
+                                e_df.columns = e_df.columns.get_level_values(0)
+                            endeks_cache[endeks_sembol] = e_df
+                        except Exception:
+                            endeks_cache[endeks_sembol] = None
+                    e_df = endeks_cache.get(endeks_sembol)
+                    if e_df is not None and len(e_df) > gun:
+                        endeks_getirileri[endeks_adi] = (e_df["Close"].iloc[-1] / e_df["Close"].iloc[-gun-1] - 1) * 100
+                    else:
+                        endeks_getirileri[endeks_adi] = None
+
+                xu100_get = endeks_getirileri.get("XU100")
+                xbank_get = endeks_getirileri.get("XBANK")
+                fark_xu = (h_get - xu100_get) if (h_get is not None and xu100_get is not None) else None
+                fark_xb = (h_get - xbank_get) if (h_get is not None and xbank_get is not None) else None
+
+                h_str = f"{h_get:+.2f}%" if h_get is not None else "N/A"
+                x_str = f"{xu100_get:+.2f}%" if xu100_get is not None else "N/A"
+                b_str = f"{xbank_get:+.2f}%" if xbank_get is not None else "N/A"
+                fx_str = f"{fark_xu:+.2f}%" if fark_xu is not None else "N/A"
+                fb_str = f"{fark_xb:+.2f}%" if fark_xb is not None else "N/A"
+                L.append(f"  {etiket:<6}{h_str:>10}{x_str:>10}{b_str:>10}{fx_str:>13}{fb_str:>13}")
+
         L.append(f"\nSON 20 GÜN / 52 HAFTALIK ({tarih_str})")
         L.append(f"  20g Yüksek   : {df['High'].tail(20).max():.2f}")
         L.append(f"  20g Düşük    : {df['Low'].tail(20).min():.2f}")
@@ -370,46 +541,6 @@ def analiz_et(sembol_ham, periyot="2y"):
             L.append(f"  Haftalık Kapanış: {son_h['Close']:.2f}")
             L.append(f"  EMA 21 (H)      : {ema21_h:.2f}")
             L.append(f"  EMA 50 (H)      : {ema50_h:.2f}")
-
-        L.append(f"\\nAYLIK GÖRÜNÜM ({tarih_str})")
-        if len(df_m) >= 3:
-            son_m = df_m.iloc[-1]
-            ema6_m = df_m["Close"].ewm(span=6, adjust=False).mean().iloc[-1]
-            ema12_m = df_m["Close"].ewm(span=12, adjust=False).mean().iloc[-1]
-            L.append(f"  Aylık Kapanış   : {son_m['Close']:.2f}")
-            L.append(f"  EMA 6 (A)       : {ema6_m:.2f}")
-            L.append(f"  EMA 12 (A)      : {ema12_m:.2f}")
-        else:
-            L.append("  Aylık veri      : Yetersiz")
-
-        L.append(f"\\nDESTEK / DİRENÇ REFERANSLARI ({tarih_str})")
-        for gun in [20, 60]:
-            parca = df.tail(gun)
-            if len(parca) >= min(gun, 10):
-                L.append(f"  Son {gun}g Dip    : {parca['Low'].min():.2f}")
-                L.append(f"  Son {gun}g Tepe   : {parca['High'].max():.2f}")
-
-        profil = hacim_profili(df, gun=60, kademe=12)
-        L.append(f"\\nHACİM PROFİLİ (SON 60 GÜN) ({tarih_str})")
-        if profil:
-            L.append(f"  POC (En yoğun)   : {profil['poc']:.2f}")
-            L.append(f"  Değer Alanı Alt  : {profil['val']:.2f}")
-            L.append(f"  Değer Alanı Üst  : {profil['vah']:.2f}")
-            L.append("  Not              : Yaklaşık tipik fiyat-hacim dağılımıdır.")
-        else:
-            L.append("  Hacim profili    : Hesaplanamadı")
-
-        if not coin_mi:
-            L.append(f"\\nGÖRECELİ PERFORMANS ({tarih_str})")
-            for ad, kaynak in [("HISSE", df), ("XU100", xu100_gecmis), ("XBANK", xbank_gecmis)]:
-                if kaynak is None or kaynak.empty:
-                    L.append(f"  {ad:<8} veri yok")
-                    continue
-                getiriler = []
-                for gun, etiket in [(21, "1 Ay"), (63, "3 Ay"), (126, "6 Ay")]:
-                    getiri = donem_getirisi(kaynak, gun)
-                    getiriler.append(f"{etiket}: {getiri:+.2f}%" if getiri is not None else f"{etiket}: N/A")
-                L.append(f"  {ad:<8} " + " | ".join(getiriler))
 
         L.append(f"\nKARŞILAŞTIRMA ({tarih_str})")
         if coin_mi:
@@ -439,10 +570,11 @@ def tarama_yap(liste, liste_adi, periyot, bekleme=0.5):
     tum_metinler = []
     basarili = 0
     basarisiz = []
+    endeks_cache = {}  # XU100 / XBANK tek sefer çekilsin
 
     for i, sembol in enumerate(liste):
         durum.text(f"📊 {sembol} çekiliyor... {i+1}/{len(liste)}")
-        metin = analiz_et(sembol, periyot)
+        metin = analiz_et(sembol, periyot, endeks_cache=endeks_cache)
         if metin:
             tum_metinler.append(metin)
             basarili += 1
