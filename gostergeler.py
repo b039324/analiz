@@ -40,6 +40,62 @@ def mfi(df, n=14):
         return 100 - 100 / (1 + pozitif / negatif)
 
 
+# ==================== TEKNİK GÖSTERGELER (panel.py'den taşındı, hesaplar aynı) ====================
+def teknik_gostergeler(df):
+    """OHLCV DataFrame'ine EMA/SMA, RSI, MACD, Bollinger, ATR, Stokastik, ADX, OBV, VWAP, CMF, MFI sütunlarını ekler."""
+    for span in [9, 21, 50, 100, 200]:
+        df[f"EMA{span}"] = df["Close"].ewm(span=span, adjust=False).mean()
+    for span in [20, 50, 200]:
+        df[f"SMA{span}"] = df["Close"].rolling(span).mean()
+
+    delta = df["Close"].diff()
+    gain  = delta.where(delta > 0, 0).rolling(14).mean()
+    loss  = -delta.where(delta < 0, 0).rolling(14).mean()
+    df["RSI"] = 100 - (100 / (1 + gain/loss))
+
+    ema12 = df["Close"].ewm(span=12, adjust=False).mean()
+    ema26 = df["Close"].ewm(span=26, adjust=False).mean()
+    df["MACD"]      = ema12 - ema26
+    df["MACD_Sig"]  = df["MACD"].ewm(span=9, adjust=False).mean()
+    df["MACD_Hist"] = df["MACD"] - df["MACD_Sig"]
+
+    df["BB_Mid"]   = df["Close"].rolling(20).mean()
+    df["BB_Std"]   = df["Close"].rolling(20).std()
+    df["BB_Upper"] = df["BB_Mid"] + 2 * df["BB_Std"]
+    df["BB_Lower"] = df["BB_Mid"] - 2 * df["BB_Std"]
+    df["BB_Width"] = (df["BB_Upper"] - df["BB_Lower"]) / df["BB_Mid"] * 100
+
+    high_low   = df["High"] - df["Low"]
+    high_close = (df["High"] - df["Close"].shift()).abs()
+    low_close  = (df["Low"] - df["Close"].shift()).abs()
+    tr = pd.concat([high_low, high_close, low_close], axis=1).max(axis=1)
+    df["ATR"]     = tr.rolling(14).mean()
+    df["ATR_Pct"] = df["ATR"] / df["Close"] * 100
+
+    low14  = df["Low"].rolling(14).min()
+    high14 = df["High"].rolling(14).max()
+    df["Stoch_K"] = 100 * (df["Close"] - low14) / (high14 - low14)
+    df["Stoch_D"] = df["Stoch_K"].rolling(3).mean()
+
+    up_move   = df["High"].diff()
+    down_move = -df["Low"].diff()
+    plus_dm   = np.where((up_move > down_move) & (up_move > 0), up_move, 0)
+    minus_dm  = np.where((down_move > up_move) & (down_move > 0), down_move, 0)
+    atr14     = tr.rolling(14).mean()
+    plus_di   = 100 * pd.Series(plus_dm, index=df.index).rolling(14).mean() / atr14
+    minus_di  = 100 * pd.Series(minus_dm, index=df.index).rolling(14).mean() / atr14
+    df["PLUS_DI"], df["MINUS_DI"] = plus_di, minus_di
+    dx        = 100 * (plus_di - minus_di).abs() / (plus_di + minus_di)
+    df["ADX"] = dx.rolling(14).mean()
+
+    df["OBV"]      = (np.sign(df["Close"].diff()) * df["Volume"]).fillna(0).cumsum()
+    df["VWAP20"]   = (df["Close"] * df["Volume"]).rolling(20).sum() / df["Volume"].rolling(20).sum()
+    df["Vol_MA20"] = df["Volume"].rolling(20).mean()
+    df["CMF20"]    = cmf(df, 20)
+    df["MFI14"]    = mfi(df, 14)
+    return df
+
+
 # ==================== 1) HAFTALIK / AYLIK ====================
 def donem_kapanislari(df):
     """Günlük veriden haftalık (Cuma) ve aylık kapanışlar + trend uyumu bayrakları."""
