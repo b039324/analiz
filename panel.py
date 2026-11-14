@@ -7,6 +7,7 @@ import time
 from datetime import datetime, timezone, timedelta
 
 import gostergeler as gst
+import tablo
 
 # Türkiye kalıcı olarak UTC+3 (yaz saati yok); sunucu saati ne olursa olsun İstanbul saati yazılır
 TR_TZ = timezone(timedelta(hours=3))
@@ -15,11 +16,11 @@ def cekim_zamani():
     """Verinin çekildiği an: 'GG.AA.YYYY SS:DD:SS (İstanbul)'"""
     return datetime.now(TR_TZ).strftime("%d.%m.%Y %H:%M:%S") + " (İstanbul)"
 
-st.set_page_config(page_title="BIST & Coin Analiz", page_icon="📊", layout="centered")
+st.set_page_config(page_title="BIST & Coin Analiz", page_icon="📊", layout="wide")
 
 st.markdown("""
 <style>
-    .block-container {padding-top: 2rem; max-width: 900px;}
+    .block-container {padding-top: 2rem; max-width: 1400px;}
     h1 {color: #00d4aa; font-size: 1.8rem;}
     .stTextInput input {font-size: 1.1rem;}
 </style>
@@ -89,28 +90,33 @@ def fmt_yuzde(v, na="N/A"):
     except (ValueError, TypeError):
         return str(v)
 
-# ==================== MARKDOWN ÇIKTISI ====================
-def md_indir_butonu(baslik, metin, dosya_adi, anahtar):
-    """Analiz metnini .md dosyası olarak indirten buton gösterir."""
+# ==================== İNDİRME BUTONLARI ====================
+def indir_butonu(**ayarlar):
+    """st.download_button; Streamlit sürümüne göre desteklenmeyen parametreleri atarak dener.
+
+    Yeni sürümlerde on_click="ignore" indirirken sayfanın yeniden çalışmasını engeller.
+    """
+    secenekler = [
+        dict(on_click="ignore", use_container_width=True),
+        dict(on_click="ignore"),
+        dict(use_container_width=True),
+        dict(),
+    ]
+    for ek in secenekler:
+        try:
+            return st.download_button(**ayarlar, **ek)
+        except TypeError:
+            continue
+
+def md_indir_butonu(baslik, metin, dosya_adi, anahtar, zaman, damga):
+    """Analiz metnini .md dosyası olarak indirten buton gösterir (zaman = verinin çekildiği an)."""
     md = (
         f"# {baslik}\n\n"
-        f"_Veri çekim zamanı: {cekim_zamani()}_\n\n"
+        f"_Veri çekim zamanı: {zaman}_\n\n"
         "```text\n" + metin + "\n```\n"
     )
-    zaman_damgasi = datetime.now(TR_TZ).strftime("%Y%m%d_%H%M")
-    ayarlar = dict(
-        label="⬇️ Markdown (.md) olarak indir",
-        data=md.encode("utf-8"),
-        file_name=f"{dosya_adi}_{zaman_damgasi}.md",
-        mime="text/markdown",
-        use_container_width=True,
-        key=anahtar,
-    )
-    try:
-        # Yeni Streamlit: indirirken sayfa yeniden çalışmaz, sonuç ekranda kalır
-        st.download_button(on_click="ignore", **ayarlar)
-    except TypeError:
-        st.download_button(**ayarlar)
+    indir_butonu(label="⬇️ Metin (.md) indir", data=md.encode("utf-8"),
+                 file_name=f"{dosya_adi}_{damga}.md", mime="text/markdown", key=anahtar)
 
 # ==================== ENDEKS / KUR VERİSİ ====================
 def endeksleri_cek(periyot):
@@ -245,8 +251,8 @@ def bolum_hacim_profili(df, tarih_str, pencere=60):
     return L
 
 # ==================== HİSSE / COİN ANALİZİ ====================
-def analiz_et(sembol_ham, periyot="2y", endeksler=None):
-    """Hisse veya coin için tam analiz metni döndürür. Hata olursa None döner.
+def analiz_et_detay(sembol_ham, periyot="2y", endeksler=None):
+    """Hisse veya coin için (analiz metni, tablo satırı) döndürür. Hata olursa None döner.
 
     endeksler: endeksleri_cek() sonucu. Taramada bir kez çekilip verilir; verilmezse (hisse için) burada çekilir.
     """
@@ -276,56 +282,8 @@ def analiz_et(sembol_ham, periyot="2y", endeksler=None):
         if isinstance(df.columns, pd.MultiIndex):
             df.columns = df.columns.get_level_values(0)
 
-        # Göstergeler
-        for span in [9, 21, 50, 100, 200]:
-            df[f"EMA{span}"] = df["Close"].ewm(span=span, adjust=False).mean()
-        for span in [20, 50, 200]:
-            df[f"SMA{span}"] = df["Close"].rolling(span).mean()
-
-        delta = df["Close"].diff()
-        gain  = delta.where(delta > 0, 0).rolling(14).mean()
-        loss  = -delta.where(delta < 0, 0).rolling(14).mean()
-        df["RSI"] = 100 - (100 / (1 + gain/loss))
-
-        ema12 = df["Close"].ewm(span=12, adjust=False).mean()
-        ema26 = df["Close"].ewm(span=26, adjust=False).mean()
-        df["MACD"]      = ema12 - ema26
-        df["MACD_Sig"]  = df["MACD"].ewm(span=9, adjust=False).mean()
-        df["MACD_Hist"] = df["MACD"] - df["MACD_Sig"]
-
-        df["BB_Mid"]   = df["Close"].rolling(20).mean()
-        df["BB_Std"]   = df["Close"].rolling(20).std()
-        df["BB_Upper"] = df["BB_Mid"] + 2 * df["BB_Std"]
-        df["BB_Lower"] = df["BB_Mid"] - 2 * df["BB_Std"]
-        df["BB_Width"] = (df["BB_Upper"] - df["BB_Lower"]) / df["BB_Mid"] * 100
-
-        high_low   = df["High"] - df["Low"]
-        high_close = (df["High"] - df["Close"].shift()).abs()
-        low_close  = (df["Low"] - df["Close"].shift()).abs()
-        tr = pd.concat([high_low, high_close, low_close], axis=1).max(axis=1)
-        df["ATR"]     = tr.rolling(14).mean()
-        df["ATR_Pct"] = df["ATR"] / df["Close"] * 100
-
-        low14  = df["Low"].rolling(14).min()
-        high14 = df["High"].rolling(14).max()
-        df["Stoch_K"] = 100 * (df["Close"] - low14) / (high14 - low14)
-        df["Stoch_D"] = df["Stoch_K"].rolling(3).mean()
-
-        up_move   = df["High"].diff()
-        down_move = -df["Low"].diff()
-        plus_dm   = np.where((up_move > down_move) & (up_move > 0), up_move, 0)
-        minus_dm  = np.where((down_move > up_move) & (down_move > 0), down_move, 0)
-        atr14     = tr.rolling(14).mean()
-        plus_di   = 100 * pd.Series(plus_dm, index=df.index).rolling(14).mean() / atr14
-        minus_di  = 100 * pd.Series(minus_dm, index=df.index).rolling(14).mean() / atr14
-        dx        = 100 * (plus_di - minus_di).abs() / (plus_di + minus_di)
-        df["ADX"] = dx.rolling(14).mean()
-
-        df["OBV"]      = (np.sign(df["Close"].diff()) * df["Volume"]).fillna(0).cumsum()
-        df["VWAP20"]   = (df["Close"] * df["Volume"]).rolling(20).sum() / df["Volume"].rolling(20).sum()
-        df["Vol_MA20"] = df["Volume"].rolling(20).mean()
-        df["CMF20"]    = gst.cmf(df, 20)
-        df["MFI14"]    = gst.mfi(df, 14)
+        # Göstergeler (gostergeler.py)
+        df = gst.teknik_gostergeler(df)
 
         son    = df.iloc[-1]
         onceki = df.iloc[-2]
@@ -384,8 +342,8 @@ def analiz_et(sembol_ham, periyot="2y", endeksler=None):
 
         L.append(f"\nTREND GÜCÜ ({tarih_str})")
         L.append(f"  ADX (14)     : {son['ADX']:.2f}")
-        L.append(f"  +DI          : {plus_di.iloc[-1]:.2f}")
-        L.append(f"  -DI          : {minus_di.iloc[-1]:.2f}")
+        L.append(f"  +DI          : {son['PLUS_DI']:.2f}")
+        L.append(f"  -DI          : {son['MINUS_DI']:.2f}")
 
         L.append(f"\nVOLATİLİTE ({tarih_str})")
         L.append(f"  ATR (14)     : {son['ATR']:.2f}")
@@ -464,35 +422,41 @@ def analiz_et(sembol_ham, periyot="2y", endeksler=None):
             else:
                 L.append("\n  Not          : XBANK kıyası yalnızca banka hisselerinde yapılır.")
 
+        zaman = cekim_zamani()
         L.append("\n" + "=" * 50)
-        L.append(f"  VERİ ÇEKİM ZAMANI: {cekim_zamani()}")
+        L.append(f"  VERİ ÇEKİM ZAMANI: {zaman}")
         L.append("=" * 50)
 
-        return "\n".join(L)
+        satir = tablo.satir_hesapla(sembol, df, info, coin_mi, endeksler, zaman)
+        return "\n".join(L), satir
 
     except Exception:
         return None
 
+def analiz_et(sembol_ham, periyot="2y", endeksler=None):
+    """Yalnızca analiz metnini döndürür (hata olursa None)."""
+    r = analiz_et_detay(sembol_ham, periyot, endeksler)
+    return r[0] if r else None
+
 # ==================== TARAMA FONKSİYONU ====================
 def tarama_yap(liste, liste_adi, periyot, bekleme=0.5):
-    """Verilen hisse listesini tarar, sonuç metnini döndürür."""
-    st.info(f"⏳ {liste_adi} taranıyor... Bu işlem {len(liste) * bekleme / 60:.1f} dakika sürebilir.")
+    """Verilen listeyi tarar; sonuç sözlüğünü (tablo + metin) döndürür, hiç veri yoksa None."""
+    st.info(f"⏳ {liste_adi} taranıyor... Bekleme süreleri toplamı {len(liste) * bekleme / 60:.1f} dk; "
+            "veri çekme süresiyle birlikte birkaç dakika sürebilir.")
     ilerleme = st.progress(0)
     durum = st.empty()
 
-    tum_metinler = []
-    basarili = 0
-    basarisiz = []
+    tum_metinler, satirlar, basarisiz = [], [], []
 
     # XU100 / XBANK / USDTRY tüm tarama için bir kez çekilir (hisse başına 3 istek tasarrufu)
     endeksler = endeksleri_cek(periyot)
 
     for i, sembol in enumerate(liste):
         durum.text(f"📊 {sembol} çekiliyor... {i+1}/{len(liste)}")
-        metin = analiz_et(sembol, periyot, endeksler)
-        if metin:
-            tum_metinler.append(metin)
-            basarili += 1
+        r = analiz_et_detay(sembol, periyot, endeksler)
+        if r:
+            tum_metinler.append(r[0])
+            satirlar.append(r[1])
         else:
             basarisiz.append(sembol)
         ilerleme.progress((i + 1) / len(liste))
@@ -503,9 +467,10 @@ def tarama_yap(liste, liste_adi, periyot, bekleme=0.5):
 
     if not tum_metinler:
         st.error("❌ Hiçbir hisseden veri alınamadı.")
-        return
+        return None
 
     zaman = cekim_zamani()
+    basarili = len(tum_metinler)
     baslik = (
         "=" * 50 + "\n"
         f"  {liste_adi} - TOPLU ANALİZ\n"
@@ -518,16 +483,55 @@ def tarama_yap(liste, liste_adi, periyot, bekleme=0.5):
         f"  TARAMA BİTİŞ - VERİ ÇEKİM ZAMANI: {zaman}\n"
         + "=" * 50
     )
-    tam_metin = baslik + "\n\n".join(tum_metinler) + son_not
+    return {
+        "baslik": f"{liste_adi} Toplu Analiz",
+        "dosya": liste_adi.replace(" ", ""),
+        "zaman": zaman,
+        "damga": datetime.now(TR_TZ).strftime("%Y%m%d_%H%M"),
+        "df": tablo.tablo_olustur(satirlar),
+        "metin": baslik + "\n\n".join(tum_metinler) + son_not,
+        "basarisiz": basarisiz,
+        "toplam": len(liste),
+    }
 
-    if basarisiz:
-        st.warning(f"⚠️ Veri alınamayan hisseler: {', '.join(basarisiz)}")
+# ==================== SONUÇ GÖSTERİMİ ====================
+def sonuc_goster(s):
+    """Kayıtlı sonucu gösterir: indirme seçenekleri, tablo (başlıklar üstte), sütun açıklamaları (altta), ayrıntılı metin."""
+    if not s:
+        return
+    df = s["df"]
+    st.success(f"✅ {s['baslik']} hazır! ({len(df)} satır)  |  Veri çekim zamanı: {s['zaman']}")
+    if s["basarisiz"]:
+        st.warning(f"⚠️ Veri alınamayan hisseler: {', '.join(s['basarisiz'])}")
 
-    st.success(f"✅ {liste_adi} taraması tamam! ({basarili}/{len(liste)} hisse)")
-    st.info("👇 Sağ üstteki **kopyala ikonuna** tıkla, sonra yapay zekaya yapıştır.")
-    md_indir_butonu(f"{liste_adi} Toplu Analiz", tam_metin,
-                    liste_adi.replace(" ", ""), f"md_{liste_adi}")
-    st.code(tam_metin, language=None)
+    # --- indirme ---
+    c1, c2, c3, c4 = st.columns([2, 2, 2, 2])
+    with c1:
+        bicim_ad = st.selectbox("CSV biçimi", ["Excel (Türkçe): ayırıcı ; ondalık ,",
+                                               "Uluslararası: ayırıcı , ondalık ."], index=0)
+    with c2:
+        aciklama_ekle = st.checkbox("CSV'ye açıklamaları ekle (tablonun altına)", value=True)
+    bicim = "tr" if bicim_ad.startswith("Excel") else "uluslararasi"
+    csv_baytlari = tablo.csv_olustur(df, aciklamalar=aciklama_ekle, bicim=bicim, zaman=s["zaman"])
+    with c3:
+        indir_butonu(label="⬇️ CSV indir", data=csv_baytlari, file_name=f"{s['dosya']}_{s['damga']}.csv",
+                     mime="text/csv", key="csv_indir")
+    with c4:
+        md_indir_butonu(s["baslik"], s["metin"], s["dosya"], "md_indir", s["zaman"], s["damga"])
+
+    # --- tablo: başlıklar üstte, her satır bir hisse; sütun başlığına tıklayınca sıralanır ---
+    st.subheader("📋 Tablo")
+    st.dataframe(df.set_index("Sembol"), height=min(740, 60 + 36 * len(df)))
+
+    # --- açıklamalar tablonun altında ---
+    st.subheader("ℹ️ Sütun açıklamaları")
+    st.dataframe(tablo.aciklama_tablosu(df).set_index("Sütun"), height=min(740, 60 + 36 * len(df.columns)))
+    st.caption(tablo.DOGRULAMA_NOTU)
+
+    # --- ayrıntılı metin (yapay zekaya yapıştırmak için) ---
+    if st.checkbox("Ayrıntılı metin çıktısını göster (yapay zekaya yapıştırmak için)", value=len(df) == 1):
+        st.info("👇 Sağ üstteki **kopyala ikonuna** tıkla, sonra yapay zekaya yapıştır.")
+        st.code(s["metin"], language=None)
 
 # ==================== GİRİŞ ====================
 col1, col2 = st.columns([3, 1])
@@ -541,28 +545,26 @@ analiz_btn   = st.button("🔍 Tek Hisse / Coin Analiz Et", type="primary", use_
 bist30_btn   = st.button("📊 BIST 30'u Tara", use_container_width=True)
 bist100_btn  = st.button("📊 BIST 100'ü Tara", use_container_width=True)
 
-# ==================== TEK HİSSE / COİN ====================
+# Sonuç, indirme/ayar değiştirince sayfa yeniden çalışsa da kaybolmasın diye session_state'te tutulur
 if analiz_btn and sembol_input:
-    with st.spinner(f"⏳ {sembol_input.upper()} verisi çekiliyor..."):
-        sonuc = analiz_et(sembol_input, periyot)
-
-    if sonuc is None:
-        st.error(f"❌ {sembol_input.upper()} için veri alınamadı. Sembol doğru mu?")
+    ad = sembol_input.strip().upper()
+    with st.spinner(f"⏳ {ad} verisi çekiliyor..."):
+        r = analiz_et_detay(sembol_input, periyot)
+    if r is None:
+        st.session_state["sonuc"] = None
+        st.error(f"❌ {ad} için veri alınamadı. Sembol doğru mu?")
     else:
-        st.success(f"✅ {sembol_input.upper()} analizi hazır!")
-        st.info("👇 Sağ üstteki **kopyala ikonuna** tıkla, sonra yapay zekaya yapıştır.")
-        md_indir_butonu(f"{sembol_input.strip().upper()} Analiz", sonuc,
-                        sembol_input.strip().upper(), "md_tek")
-        st.code(sonuc, language=None)
-
-# ==================== BIST 30 ====================
+        metin, satir = r
+        st.session_state["sonuc"] = {
+            "baslik": f"{ad} Analiz", "dosya": ad, "zaman": satir["Çekim Zamanı"],
+            "damga": datetime.now(TR_TZ).strftime("%Y%m%d_%H%M"),
+            "df": tablo.tablo_olustur([satir]), "metin": metin, "basarisiz": [], "toplam": 1,
+        }
 elif bist30_btn:
-    tarama_yap(BIST30, "BIST 30", periyot, bekleme=0.3)
-
-# ==================== BIST 100 ====================
+    st.session_state["sonuc"] = tarama_yap(BIST30, "BIST 30", periyot, bekleme=0.3)
 elif bist100_btn:
-    tarama_yap(BIST100, "BIST 100", periyot, bekleme=0.5)
+    st.session_state["sonuc"] = tarama_yap(BIST100, "BIST 100", periyot, bekleme=0.5)
+elif analiz_btn:
+    st.warning("⚠️ Lütfen bir hisse veya coin sembolü gir.")
 
-else:
-    if analiz_btn:
-        st.warning("⚠️ Lütfen bir hisse veya coin sembolü gir.")
+sonuc_goster(st.session_state.get("sonuc"))
